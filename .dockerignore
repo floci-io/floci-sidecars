@@ -1,0 +1,8 @@
+*
+!pom.xml
+!mvnw
+!.mvn/**
+!sidecar-core/pom.xml
+!sidecar-core/src/main/**
+!cedar/pom.xml
+!cedar/src/main/**

@@ -1,0 +1,17 @@
+target/
+*.class
+*.jar
+.idea/
+*.iml
+.settings/
+.project
+.classpath
+.vscode/
+.DS_Store
+*.log
+
+CLAUDE.md
+GEMINI.md
+COPILOT.md
+.claude
+local
