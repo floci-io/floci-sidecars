@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify every module
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ runner.os }}-
+
+      - name: Build and test
+        run: ./mvnw -B verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: surefire-reports
+          path: '**/target/surefire-reports/'
+          if-no-files-found: ignore
+
+  image:
+    name: Build image (${{ matrix.sidecar }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        sidecar: [cedar]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.sidecar }}/Dockerfile
+          load: true
+          push: false
+          tags: floci-sidecar-${{ matrix.sidecar }}:ci
+          build-args: SIDECAR_VERSION=0.0.0-ci
+          cache-from: type=gha,scope=${{ matrix.sidecar }}
+          cache-to: type=gha,scope=${{ matrix.sidecar }},mode=max
+
+      # The contract's observable surface: the labels, a non-root user, and a
+      # health response that names the sidecar and the contract major.
+      - name: Check the contract
+        run: |
+          set -euo pipefail
+          image="floci-sidecar-${{ matrix.sidecar }}:ci"
+          user="$(docker inspect -f '{{.Config.User}}' "$image")"
+          [ -n "$user" ] && [ "$user" != "0" ] && [ "$user" != "root" ] \
+            || { echo "::error::image runs as root"; exit 1; }
+          for label in contract name version port; do
+            docker inspect -f "{{index .Config.Labels \"io.floci.sidecar.$label\"}}" "$image" | grep -q . \
+              || { echo "::error::missing label io.floci.sidecar.$label"; exit 1; }
+          done
+          port="$(docker inspect -f '{{index .Config.Labels "io.floci.sidecar.port"}}' "$image")"
+          docker run -d --rm --name sidecar -p "18080:$port" "$image"
+          for _ in $(seq 1 60); do
+            if body="$(curl -fsS http://127.0.0.1:18080/health 2>/dev/null)"; then
+              echo "$body"
+              echo "$body" | grep -q '"status":"ok"' || { echo "::error::status is not ok"; exit 1; }
+              echo "$body" | grep -q "\"name\":\"${{ matrix.sidecar }}\"" || { echo "::error::name mismatch"; exit 1; }
+              echo "$body" | grep -q '"contract":"1"' || { echo "::error::contract mismatch"; exit 1; }
+              docker rm -f sidecar >/dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::sidecar did not become healthy"
+          docker logs sidecar
+          exit 1
