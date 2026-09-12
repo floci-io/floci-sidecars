@@ -24,6 +24,7 @@
        at 0.0.0-SNAPSHOT so that a release never touches a pom. -->
   <modules>
     <module>sidecar-core</module>
+    <module>cedar</module>
   </modules>
 
   <properties>

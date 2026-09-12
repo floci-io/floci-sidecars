@@ -3,19 +3,26 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>io.github.hectorvent.floci</groupId>
-  <artifactId>floci-cedar-sidecar</artifactId>
-  <version>1.0.0</version>
+
+  <parent>
+    <groupId>io.floci.sidecar</groupId>
+    <artifactId>floci-sidecars</artifactId>
+    <version>0.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>floci-sidecar-cedar</artifactId>
+  <name>Cedar Sidecar</name>
+  <description>Cedar 4 policy parsing, schema validation and authorization over HTTP</description>
 
   <properties>
-    <maven.compiler.release>25</maven.compiler.release>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <cedar.version>4.10.0</cedar.version>
-    <jackson.version>2.22.1</jackson.version>
-    <jboss.logging.version>3.6.1.Final</jboss.logging.version>
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>io.floci.sidecar</groupId>
+      <artifactId>sidecar-core</artifactId>
+    </dependency>
     <dependency>
       <groupId>com.cedarpolicy</groupId>
       <artifactId>cedar-java</artifactId>
@@ -23,23 +30,24 @@
       <classifier>uber</classifier>
     </dependency>
     <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-      <version>${jackson.version}</version>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.jboss.logging</groupId>
-      <artifactId>jboss-logging</artifactId>
-      <version>${jboss.logging.version}</version>
+      <groupId>org.hamcrest</groupId>
+      <artifactId>hamcrest</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
   <build>
+    <!-- A stable jar name so the Dockerfile never carries a version. -->
+    <finalName>sidecar</finalName>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
-        <version>3.9.0</version>
         <executions>
           <execution>
             <id>copy-runtime-dependencies</id>

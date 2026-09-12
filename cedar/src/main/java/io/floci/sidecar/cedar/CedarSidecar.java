@@ -1,13 +1,17 @@
-package io.github.hectorvent.floci.cedar;
+package io.floci.sidecar.cedar;
 
 import com.cedarpolicy.BasicAuthorizationEngine;
 import com.cedarpolicy.model.AuthorizationRequest;
+import com.cedarpolicy.model.AuthorizationResponse;
 import com.cedarpolicy.model.AuthorizationSuccessResponse;
 import com.cedarpolicy.model.Context;
 import com.cedarpolicy.model.ValidationRequest;
+import com.cedarpolicy.model.ValidationResponse;
 import com.cedarpolicy.model.entity.Entities;
 import com.cedarpolicy.model.entity.Entity;
+import com.cedarpolicy.model.exception.AuthException;
 import com.cedarpolicy.model.policy.LinkValue;
+import com.cedarpolicy.model.policy.Policy;
 import com.cedarpolicy.model.policy.PolicySet;
 import com.cedarpolicy.model.policy.TemplateLink;
 import com.cedarpolicy.model.schema.Schema;
@@ -24,106 +28,108 @@ import com.cedarpolicy.value.PrimLong;
 import com.cedarpolicy.value.PrimString;
 import com.cedarpolicy.value.Value;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-import org.jboss.logging.Logger;
+import io.floci.sidecar.core.Json;
+import io.floci.sidecar.core.SidecarServer;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Executors;
 
-/** Stateless HTTP boundary around Cedar Java 4.x for Floci Verified Permissions. */
-public final class CedarSidecarServer {
-    private static final Logger LOG = Logger.getLogger(CedarSidecarServer.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+/**
+ * Stateless HTTP boundary around Cedar Java 4.x: entity-type and schema validation, policy
+ * parsing and validation, and authorization. Every request carries the policies, templates,
+ * entities and context it needs; nothing is kept between calls.
+ */
+public final class CedarSidecar {
+
+    static final String NAME = "cedar";
+    static final int DEFAULT_PORT = 8180;
+
     private static final BasicAuthorizationEngine ENGINE = new BasicAuthorizationEngine();
 
-    private CedarSidecarServer() {
+    private CedarSidecar() {
     }
 
     public static void main(String[] args) throws IOException {
-        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8180"));
-        start(port);
+        builder().start();
     }
 
-    public static HttpServer start(int port) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
-        server.createContext("/health", exchange -> respondText(exchange, 200, "ok"));
-        server.createContext("/v1/entity-type/validate", exchange -> handleJson(exchange, CedarSidecarServer::validateEntityType));
-        server.createContext("/v1/schema/validate", exchange -> handleJson(exchange, CedarSidecarServer::validateSchema));
-        server.createContext("/v1/policy/parse", exchange -> handleJson(exchange, CedarSidecarServer::parsePolicy));
-        server.createContext("/v1/policy/validate", exchange -> handleJson(exchange, CedarSidecarServer::validatePolicy));
-        server.createContext("/v1/authorize", exchange -> handleJson(exchange, CedarSidecarServer::authorize));
-        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-        server.start();
-        LOG.infov("Floci Cedar sidecar listening on port {0}", port);
-        return server;
+    /** Starts on the given port; {@code 0} lets the OS choose. Tests use this. */
+    public static SidecarServer start(int port) throws IOException {
+        return builder().start(port);
+    }
+
+    private static SidecarServer.Builder builder() {
+        return SidecarServer.builder(NAME)
+                .defaultPort(DEFAULT_PORT)
+                .badRequestOn(AuthException.class)
+                .route("/v1/entity-type/validate", CedarSidecar::validateEntityType)
+                .route("/v1/schema/validate", CedarSidecar::validateSchema)
+                .route("/v1/policy/parse", CedarSidecar::parsePolicy)
+                .route("/v1/policy/validate", CedarSidecar::validatePolicy)
+                .route("/v1/authorize", CedarSidecar::authorize);
     }
 
     private static JsonNode validateEntityType(JsonNode body) throws Exception {
-        String value = requiredText(body, "entityType");
+        String value = Json.requiredText(body, "entityType");
         if (EntityTypeName.parse(value).isEmpty()) {
             throw new IllegalArgumentException("Invalid Cedar entity type: " + value);
         }
-        return MAPPER.createObjectNode().put("valid", true);
+        return Json.object().put("valid", true);
     }
 
     private static JsonNode validateSchema(JsonNode body) throws Exception {
-        String schema = requiredText(body, "schema");
+        String schema = Json.requiredText(body, "schema");
         Schema.parse(Schema.JsonOrCedar.Json, schema);
-        return MAPPER.createObjectNode().put("valid", true);
+        return Json.object().put("valid", true);
     }
 
     private static JsonNode parsePolicy(JsonNode body) throws Exception {
-        String statement = requiredText(body, "statement");
+        String statement = Json.requiredText(body, "statement");
         boolean template = body.path("template").asBoolean(false);
-        com.cedarpolicy.model.policy.Policy policy = template
-                ? com.cedarpolicy.model.policy.Policy.parsePolicyTemplate(statement)
-                : com.cedarpolicy.model.policy.Policy.parseStaticPolicy(statement);
+        Policy policy = template
+                ? Policy.parsePolicyTemplate(statement)
+                : Policy.parseStaticPolicy(statement);
         JsonNode ast;
         if (template) {
             PolicySet set = new PolicySet(Set.of(), Set.of(policy));
-            JsonNode templates = MAPPER.readTree(set.toJson()).path("templates");
+            JsonNode templates = Json.mapper().readTree(set.toJson()).path("templates");
             if (!templates.isObject() || templates.isEmpty()) {
                 throw new IllegalArgumentException("Cedar template AST is empty");
             }
             ast = templates.elements().next();
         } else {
-            ast = MAPPER.readTree(policy.toJson());
+            ast = Json.mapper().readTree(policy.toJson());
         }
-        ObjectNode response = MAPPER.createObjectNode();
+        ObjectNode response = Json.object();
         response.put("effect", policy.effect().name().equalsIgnoreCase("PERMIT") ? "Permit" : "Forbid");
         response.set("ast", ast);
         return response;
     }
 
     private static JsonNode validatePolicy(JsonNode body) throws Exception {
-        Schema schema = Schema.parse(Schema.JsonOrCedar.Json, requiredText(body, "schema"));
-        String statement = requiredText(body, "statement");
+        Schema schema = Schema.parse(Schema.JsonOrCedar.Json, Json.requiredText(body, "schema"));
+        String statement = Json.requiredText(body, "statement");
         boolean template = body.path("template").asBoolean(false);
-        com.cedarpolicy.model.policy.Policy policy = template
-                ? com.cedarpolicy.model.policy.Policy.parsePolicyTemplate(statement)
-                : com.cedarpolicy.model.policy.Policy.parseStaticPolicy(statement);
+        Policy policy = template
+                ? Policy.parsePolicyTemplate(statement)
+                : Policy.parseStaticPolicy(statement);
         PolicySet set = template ? new PolicySet(Set.of(), Set.of(policy)) : new PolicySet(Set.of(policy));
-        var result = ENGINE.validate(new ValidationRequest(schema, set));
+        ValidationResponse result = ENGINE.validate(new ValidationRequest(schema, set));
         if (!result.validationPassed()) {
             throw new IllegalArgumentException("The Cedar policy failed STRICT schema validation: " + result);
         }
-        return MAPPER.createObjectNode().put("valid", true);
+        return Json.object().put("valid", true);
     }
 
     private static JsonNode authorize(JsonNode body) throws Exception {
-        JsonNode request = requiredObject(body, "request");
+        JsonNode request = Json.requiredObject(body, "request");
         EntityUID principal = euid(request.get("principal"), "principal");
         EntityUID action = actionEuid(request.get("action"));
         EntityUID resource = euid(request.get("resource"), "resource");
@@ -131,10 +137,10 @@ public final class CedarSidecarServer {
         Context context = context(request.get("context"));
         PolicySet policies = policySet(body.path("policies"), body.path("templates"));
 
-        var authorizationResponse = ENGINE.isAuthorized(new AuthorizationRequest(principal, action, resource, context), policies, entities);
+        AuthorizationResponse authorizationResponse = ENGINE.isAuthorized(new AuthorizationRequest(principal, action, resource, context), policies, entities);
         AuthorizationSuccessResponse response = authorizationResponse.success.orElseThrow(() ->
                 new IllegalArgumentException("Cedar authorization failed."));
-        ObjectNode out = MAPPER.createObjectNode();
+        ObjectNode out = Json.object();
         out.put("decision", response.isAllowed() ? "ALLOW" : "DENY");
         ArrayNode reasons = out.putArray("determiningPolicyIds");
         response.getReason().stream().sorted().forEach(reasons::add);
@@ -144,21 +150,21 @@ public final class CedarSidecarServer {
     }
 
     private static PolicySet policySet(JsonNode storedPolicies, JsonNode templates) {
-        Set<com.cedarpolicy.model.policy.Policy> staticPolicies = new LinkedHashSet<>();
-        Set<com.cedarpolicy.model.policy.Policy> cedarTemplates = new LinkedHashSet<>();
+        Set<Policy> staticPolicies = new LinkedHashSet<>();
+        Set<Policy> cedarTemplates = new LinkedHashSet<>();
         List<TemplateLink> links = new ArrayList<>();
         if (templates.isObject()) {
             templates.fields().forEachRemaining(entry -> {
                 JsonNode template = entry.getValue();
-                cedarTemplates.add(new com.cedarpolicy.model.policy.Policy(requiredText(template, "statement"), entry.getKey()));
+                cedarTemplates.add(new Policy(Json.requiredText(template, "statement"), entry.getKey()));
             });
         }
         if (storedPolicies.isArray()) {
             for (JsonNode policy : storedPolicies) {
-                String policyType = requiredText(policy, "policyType");
-                String policyId = requiredText(policy, "policyId");
+                String policyType = Json.requiredText(policy, "policyType");
+                String policyId = Json.requiredText(policy, "policyId");
                 if ("STATIC".equals(policyType)) {
-                    staticPolicies.add(new com.cedarpolicy.model.policy.Policy(requiredText(policy, "statement"), policyId));
+                    staticPolicies.add(new Policy(Json.requiredText(policy, "statement"), policyId));
                     continue;
                 }
                 List<LinkValue> values = new ArrayList<>();
@@ -168,7 +174,7 @@ public final class CedarSidecarServer {
                 if (!policy.path("resource").isMissingNode() && !policy.path("resource").isNull()) {
                     values.add(new LinkValue("?resource", euid(policy.get("resource"), "resource")));
                 }
-                links.add(new TemplateLink(requiredText(policy, "policyTemplateId"), policyId, values));
+                links.add(new TemplateLink(Json.requiredText(policy, "policyTemplateId"), policyId, values));
             }
         }
         return new PolicySet(staticPolicies, cedarTemplates, links);
@@ -186,7 +192,7 @@ public final class CedarSidecarServer {
             if (!definition.get("cedarJson").isTextual()) {
                 throw new IllegalArgumentException("entities.cedarJson must be a string.");
             }
-            raw = MAPPER.readTree(definition.get("cedarJson").asText());
+            raw = Json.mapper().readTree(definition.get("cedarJson").asText());
         } else if (definition.has("entityList")) {
             if (!definition.get("entityList").isArray()) {
                 throw new IllegalArgumentException("entities.entityList must be an array.");
@@ -214,11 +220,11 @@ public final class CedarSidecarServer {
     }
 
     private static ArrayNode toCedarEntities(ArrayNode input) {
-        ArrayNode output = MAPPER.createArrayNode();
+        ArrayNode output = Json.mapper().createArrayNode();
         Map<String, ObjectNode> lastByUid = new LinkedHashMap<>();
         for (JsonNode entity : input) {
-            JsonNode identifier = requiredObject(entity, "identifier");
-            ObjectNode cedar = MAPPER.createObjectNode();
+            JsonNode identifier = Json.requiredObject(entity, "identifier");
+            ObjectNode cedar = Json.object();
             cedar.set("uid", cedarEntity(identifier));
             ObjectNode attrs = cedar.putObject("attrs");
             JsonNode attributes = entity.get("attributes");
@@ -235,7 +241,7 @@ public final class CedarSidecarServer {
             if (tagInput != null && !tagInput.isNull()) {
                 tagInput.fields().forEachRemaining(entry -> tags.set(entry.getKey(), cedarAttribute(entry.getValue())));
             }
-            lastByUid.put(requiredText(identifier, "entityType") + "\u0000" + requiredText(identifier, "entityId"), cedar);
+            lastByUid.put(Json.requiredText(identifier, "entityType") + "\u0000" + Json.requiredText(identifier, "entityId"), cedar);
         }
         lastByUid.values().forEach(output::add);
         return output;
@@ -271,21 +277,21 @@ public final class CedarSidecarServer {
         }
         Map.Entry<String, JsonNode> member = union.fields().next();
         return switch (member.getKey()) {
-            case "boolean" -> MAPPER.getNodeFactory().booleanNode(member.getValue().asBoolean());
-            case "long" -> MAPPER.getNodeFactory().numberNode(member.getValue().asLong());
-            case "string" -> MAPPER.getNodeFactory().textNode(member.getValue().asText());
+            case "boolean" -> Json.mapper().getNodeFactory().booleanNode(member.getValue().asBoolean());
+            case "long" -> Json.mapper().getNodeFactory().numberNode(member.getValue().asLong());
+            case "string" -> Json.mapper().getNodeFactory().textNode(member.getValue().asText());
             case "entityIdentifier" -> explicitEntity(member.getValue());
             case "ipaddr" -> extension("ip", member.getValue().asText());
             case "decimal" -> extension("decimal", member.getValue().asText());
             case "datetime" -> extension("datetime", member.getValue().asText());
             case "duration" -> extension("duration", member.getValue().asText());
             case "set" -> {
-                ArrayNode set = MAPPER.createArrayNode();
+                ArrayNode set = Json.mapper().createArrayNode();
                 member.getValue().forEach(value -> set.add(cedarAttribute(value)));
                 yield set;
             }
             case "record" -> {
-                ObjectNode record = MAPPER.createObjectNode();
+                ObjectNode record = Json.object();
                 member.getValue().fields().forEachRemaining(entry -> record.set(entry.getKey(), cedarAttribute(entry.getValue())));
                 yield record;
             }
@@ -301,7 +307,7 @@ public final class CedarSidecarServer {
             throw new IllegalArgumentException("context must contain exactly one union member.");
         }
         if (definition.has("cedarJson")) {
-            JsonNode raw = MAPPER.readTree(requiredText(definition, "cedarJson"));
+            JsonNode raw = Json.mapper().readTree(Json.requiredText(definition, "cedarJson"));
             if (!raw.isObject()) {
                 throw new IllegalArgumentException("context.cedarJson must encode an object.");
             }
@@ -392,15 +398,15 @@ public final class CedarSidecarServer {
         if (node == null || !node.isObject()) {
             throw new IllegalArgumentException("action is required.");
         }
-        return euid(requiredText(node, "actionType"), requiredText(node, "actionId"));
+        return euid(Json.requiredText(node, "actionType"), Json.requiredText(node, "actionId"));
     }
 
     private static EntityUID euid(JsonNode node, String field) {
         if (node == null || !node.isObject()) {
             throw new IllegalArgumentException(field + " is required.");
         }
-        String type = node.has("entityType") ? requiredText(node, "entityType") : requiredText(node, "type");
-        String id = node.has("entityId") ? requiredText(node, "entityId") : requiredText(node, "id");
+        String type = node.has("entityType") ? Json.requiredText(node, "entityType") : Json.requiredText(node, "type");
+        String id = node.has("entityId") ? Json.requiredText(node, "entityId") : Json.requiredText(node, "id");
         return euid(type, id);
     }
 
@@ -411,83 +417,23 @@ public final class CedarSidecarServer {
     }
 
     private static ObjectNode cedarEntity(JsonNode identifier) {
-        ObjectNode node = MAPPER.createObjectNode();
-        node.put("type", identifier.has("entityType") ? requiredText(identifier, "entityType") : requiredText(identifier, "type"));
-        node.put("id", identifier.has("entityId") ? requiredText(identifier, "entityId") : requiredText(identifier, "id"));
+        ObjectNode node = Json.object();
+        node.put("type", identifier.has("entityType") ? Json.requiredText(identifier, "entityType") : Json.requiredText(identifier, "type"));
+        node.put("id", identifier.has("entityId") ? Json.requiredText(identifier, "entityId") : Json.requiredText(identifier, "id"));
         return node;
     }
 
     private static ObjectNode explicitEntity(JsonNode identifier) {
-        ObjectNode out = MAPPER.createObjectNode();
+        ObjectNode out = Json.object();
         out.set("__entity", cedarEntity(identifier));
         return out;
     }
 
     private static ObjectNode extension(String fn, String arg) {
-        ObjectNode root = MAPPER.createObjectNode();
+        ObjectNode root = Json.object();
         ObjectNode ext = root.putObject("__extn");
         ext.put("fn", fn);
         ext.put("arg", arg);
         return root;
-    }
-
-    private static String requiredText(JsonNode node, String field) {
-        JsonNode value = node == null ? null : node.get(field);
-        if (value == null || !value.isTextual() || value.asText().isEmpty()) {
-            throw new IllegalArgumentException(field + " is required.");
-        }
-        return value.asText();
-    }
-
-    private static JsonNode requiredObject(JsonNode node, String field) {
-        JsonNode value = node == null ? null : node.get(field);
-        if (value == null || !value.isObject()) {
-            throw new IllegalArgumentException(field + " is required.");
-        }
-        return value;
-    }
-
-    private static void handleJson(HttpExchange exchange, JsonHandler handler) throws IOException {
-        if (!"POST".equals(exchange.getRequestMethod())) {
-            respondJson(exchange, 405, error("Method not allowed"));
-            return;
-        }
-        try {
-            JsonNode body = MAPPER.readTree(exchange.getRequestBody());
-            respondJson(exchange, 200, handler.handle(body));
-        } catch (IllegalArgumentException | com.cedarpolicy.model.exception.AuthException e) {
-            respondJson(exchange, 400, error(safeMessage(e)));
-        } catch (Exception e) {
-            respondJson(exchange, 500, error(safeMessage(e)));
-        }
-    }
-
-    private static ObjectNode error(String message) {
-        return MAPPER.createObjectNode().put("error", message);
-    }
-
-    private static void respondJson(HttpExchange exchange, int status, JsonNode body) throws IOException {
-        byte[] bytes = MAPPER.writeValueAsBytes(body);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.close();
-    }
-
-    private static void respondText(HttpExchange exchange, int status, String body) throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.close();
-    }
-
-    private static String safeMessage(Exception e) {
-        String message = e.getMessage();
-        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
-    }
-
-    @FunctionalInterface
-    private interface JsonHandler {
-        JsonNode handle(JsonNode body) throws Exception;
     }
 }
