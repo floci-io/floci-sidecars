@@ -1,0 +1,110 @@
+name: Release
+
+# release-please keeps one release pull request open per sidecar, built from the
+# Conventional Commits that touch its directory. Merging that PR bumps
+# <sidecar>/version.txt, tags <sidecar>-vX.Y.Z, and this workflow publishes
+#
+#   floci/floci-sidecar-<sidecar>:X.Y.Z   floci/floci-sidecar-<sidecar>:latest
+#   public.ecr.aws/floci/floci-sidecar-<sidecar>:X.Y.Z   ...:latest
+#
+# A prerelease can be published from any branch with the manual trigger; it
+# gets only the given tag, never latest, so a consumer can pin an unreleased
+# change while its own pull request is open.
+#
+# Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, AWS_ROLE_ARN
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sidecar:
+        description: Sidecar directory to publish (for example cedar)
+        required: true
+        type: string
+      version:
+        description: Tag to publish, such as 1.1.0-rc.1
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release pull requests and tags
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      paths_released: ${{ steps.release.outputs.paths_released }}
+      releases_created: ${{ steps.release.outputs.releases_created }}
+    steps:
+      # Pin to a commit SHA after the first successful run, like every other action here.
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # One publish per released sidecar; the version is read from the sidecar's
+  # version.txt, which the release PR just bumped.
+  publish-released:
+    name: Publish ${{ matrix.sidecar }}
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sidecar: ${{ fromJson(needs.release-please.outputs.paths_released) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve version
+        id: version
+        run: |
+          version="$(tr -d '[:space:]' < "${{ matrix.sidecar }}/version.txt")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publishing ${{ matrix.sidecar }} $version"
+
+      - uses: ./.github/actions/publish-sidecar
+        with:
+          sidecar: ${{ matrix.sidecar }}
+          version: ${{ steps.version.outputs.version }}
+          latest: 'true'
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+
+  publish-prerelease:
+    name: Publish ${{ inputs.sidecar }} ${{ inputs.version }}
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse a final version from the manual path
+        run: |
+          case "${{ inputs.version }}" in
+            *-*) ;;
+            *) echo "::error::manual publishes are for prereleases (X.Y.Z-rc.N); final versions come from release-please"; exit 1 ;;
+          esac
+          test -f "${{ inputs.sidecar }}/Dockerfile" || { echo "::error::no such sidecar: ${{ inputs.sidecar }}"; exit 1; }
+
+      - uses: ./.github/actions/publish-sidecar
+        with:
+          sidecar: ${{ inputs.sidecar }}
+          version: ${{ inputs.version }}
+          latest: 'false'
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
