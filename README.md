@@ -52,7 +52,8 @@ docker build -f cedar/Dockerfile -t floci-sidecar-cedar:local .   # always from 
    `PORT`, `/health`, JSON parsing and error mapping.
 2. Add the module to the root `pom.xml`, the paths to `.dockerignore`, and the package to
    `release-please-config.json` and `.release-please-manifest.json` (start at `0.1.0`).
-3. Add a build matrix entry in `.github/workflows/ci.yml` and `release.yml`.
+3. Add the directory to the image matrix in `.github/workflows/ci.yml`. The release workflow
+   needs nothing: it publishes whatever release-please released.
 4. Document the endpoints in `<name>/API.md` and add a row to the table above.
 5. Keep the API free of emulator vocabulary: a sidecar answers a generic question (evaluate this
    policy, execute this query); the emulator maps its own service semantics onto that.
