@@ -1,5 +1,5 @@
 name: Publish a sidecar image
-description: Build one sidecar for linux/amd64 and linux/arm64 and push it to Docker Hub and ECR Public
+description: Build one sidecar for linux/amd64 and linux/arm64 and push it to Docker Hub
 
 inputs:
   sidecar:
@@ -15,8 +15,6 @@ inputs:
     required: true
   dockerhub-token:
     required: true
-  aws-role-arn:
-    required: true
 
 runs:
   using: composite
@@ -31,25 +29,14 @@ runs:
         username: ${{ inputs.dockerhub-username }}
         password: ${{ inputs.dockerhub-token }}
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-      with:
-        role-to-assume: ${{ inputs.aws-role-arn }}
-        aws-region: us-east-1
-
-    - name: Login to Amazon ECR Public
-      uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
-      with:
-        registry-type: public
-
     - name: Compute tags
       id: tags
       shell: bash
       run: |
         image="floci-sidecar-${{ inputs.sidecar }}"
-        tags="floci/$image:${{ inputs.version }}"$'\n'"public.ecr.aws/floci/$image:${{ inputs.version }}"
+        tags="floci/$image:${{ inputs.version }}"
         if [ "${{ inputs.latest }}" = "true" ]; then
-          tags="$tags"$'\n'"floci/$image:latest"$'\n'"public.ecr.aws/floci/$image:latest"
+          tags="$tags"$'\n'"floci/$image:latest"
         fi
         {
           echo "tags<<EOF"

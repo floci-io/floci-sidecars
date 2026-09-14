@@ -173,7 +173,7 @@ consumer's point of view (what was broken, what is new), not how it was implemen
 
 release-please keeps one release pull request open per sidecar. Merging it bumps
 `<name>/version.txt`, tags `<name>-vX.Y.Z`, and the `Release` workflow publishes
-`floci/floci-sidecar-<name>:X.Y.Z` and `:latest` to Docker Hub and ECR Public for `linux/amd64`
+`floci/floci-sidecar-<name>:X.Y.Z` and `:latest` to Docker Hub for `linux/amd64`
 and `linux/arm64`. Nothing is published on an ordinary merge.
 
 A prerelease is published from any branch with the `Release` workflow's manual trigger

@@ -5,13 +5,12 @@ name: Release
 # <sidecar>/version.txt, tags <sidecar>-vX.Y.Z, and this workflow publishes
 #
 #   floci/floci-sidecar-<sidecar>:X.Y.Z   floci/floci-sidecar-<sidecar>:latest
-#   public.ecr.aws/floci/floci-sidecar-<sidecar>:X.Y.Z   ...:latest
 #
 # A prerelease can be published from any branch with the manual trigger; it
 # gets only the given tag, never latest, so a consumer can pin an unreleased
 # change while its own pull request is open.
 #
-# Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, AWS_ROLE_ARN
+# Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
 
 on:
   push:
@@ -30,7 +29,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -82,7 +80,6 @@ jobs:
           latest: 'true'
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
 
   publish-prerelease:
     name: Publish ${{ inputs.sidecar }} ${{ inputs.version }}
@@ -107,4 +104,3 @@ jobs:
           latest: 'false'
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}

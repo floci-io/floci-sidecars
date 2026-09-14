@@ -16,7 +16,7 @@ Every sidecar in this repository implements the [sidecar contract](docs/contract
 |---|---|---|---|
 | [cedar](cedar/) | `floci/floci-sidecar-cedar` | 8180 | Cedar 4 policy parsing, schema validation and authorization (Amazon Verified Permissions) |
 
-Images are published to Docker Hub and mirrored to `public.ecr.aws/floci/`, tagged with the
+Images are published to Docker Hub, tagged with the
 sidecar's own semantic version and `latest`, for `linux/amd64` and `linux/arm64`.
 
 ```bash
