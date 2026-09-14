@@ -1,0 +1,32 @@
+# CODEOWNERS for floci-sidecars
+#
+# Routes each sidecar directory to its owner (see MAINTAINERS.md) and keeps the contract,
+# the shared module and release automation with the Lead, per the org-wide GOVERNANCE.md.
+#
+# Order matters: the LAST matching pattern wins, so the Lead-reserved paths below stay
+# authoritative over the per-sidecar rules above them.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: the Lead owns everything not listed below
+*                               @hectorvent
+
+# Sidecars: add a line per directory when a sidecar gains an owner (mirror MAINTAINERS.md)
+/cedar/                         @hectorvent
+
+# The contract and the module every sidecar inherits
+/docs/contract.md               @hectorvent
+/sidecar-core/                  @hectorvent
+
+# CI, release automation, build surface
+/.github/                       @hectorvent
+/release-please-config.json     @hectorvent
+/.release-please-manifest.json  @hectorvent
+/pom.xml                        @hectorvent
+/.dockerignore                  @hectorvent
+**/Dockerfile                   @hectorvent
+
+# Reserved to the Lead
+/LICENSE                        @hectorvent
+/CODEOWNERS                     @hectorvent
+/MAINTAINERS.md                 @hectorvent
