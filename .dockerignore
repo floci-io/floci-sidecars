@@ -6,3 +6,4 @@
 !sidecar-core/src/main/**
 !cedar/pom.xml
 !cedar/src/main/**
+!native/**

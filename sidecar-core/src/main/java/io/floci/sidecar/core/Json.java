@@ -1,5 +1,6 @@
 package io.floci.sidecar.core;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -22,6 +23,21 @@ public final class Json {
 
     public static ObjectNode error(String message) {
         return MAPPER.createObjectNode().put("error", message);
+    }
+
+    /**
+     * Parses a request body. A blank body is a bad request; malformed JSON throws
+     * {@link JsonProcessingException}, which the error envelope also reports as a bad request.
+     */
+    public static JsonNode body(String raw) throws JsonProcessingException {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("A JSON request body is required.");
+        }
+        JsonNode node = MAPPER.readTree(raw);
+        if (node == null || node.isMissingNode()) {
+            throw new IllegalArgumentException("A JSON request body is required.");
+        }
+        return node;
     }
 
     /** A non-empty string field, or {@link IllegalArgumentException} naming the field. */
