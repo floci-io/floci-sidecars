@@ -1,0 +1,26 @@
+# Packaging only: CI builds the native executable per architecture on the host and stages
+#   native/<arch>/application         the GraalVM executable
+#   native/<arch>/libcedar_java_ffi.so this architecture's Cedar Rust runtime
+# then one multi-arch buildx run picks the right directory. See cedar/Dockerfile for a local build.
+FROM registry.access.redhat.com/ubi9-micro:9.7
+ARG TARGETARCH
+ARG SIDECAR_VERSION=dev
+ENV SIDECAR_VERSION=${SIDECAR_VERSION} \
+    CEDAR_JAVA_FFI_LIB=/app/libcedar_java_ffi.so
+LABEL io.floci.sidecar.contract="1" \
+      io.floci.sidecar.name="cedar" \
+      io.floci.sidecar.version="${SIDECAR_VERSION}" \
+      io.floci.sidecar.port="8180" \
+      io.floci.sidecar.health-path="/health" \
+      org.opencontainers.image.title="Floci Cedar sidecar" \
+      org.opencontainers.image.version="${SIDECAR_VERSION}" \
+      org.opencontainers.image.source="https://github.com/floci-io/floci-sidecars" \
+      org.opencontainers.image.licenses="MIT"
+RUN echo 'sidecar:x:10001:10001:Sidecar:/app:/sbin/nologin' >> /etc/passwd \
+    && echo 'sidecar:x:10001:' >> /etc/group
+WORKDIR /app
+COPY --chmod=755 --chown=10001:10001 native/${TARGETARCH}/ /app/
+USER 10001:10001
+EXPOSE 8180
+HEALTHCHECK --interval=5s --timeout=3s --retries=5 CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/${PORT:-8180}"]
+ENTRYPOINT ["/app/application"]

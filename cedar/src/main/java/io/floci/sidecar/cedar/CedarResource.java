@@ -31,9 +31,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.floci.sidecar.core.Json;
-import io.floci.sidecar.core.SidecarServer;
+import io.quarkus.runtime.StartupEvent;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.event.Observes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import org.jboss.logging.Logger;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -46,34 +52,53 @@ import java.util.Set;
  * parsing and validation, and authorization. Every request carries the policies, templates,
  * entities and context it needs; nothing is kept between calls.
  */
-public final class CedarSidecar {
+@Path("/v1")
+@Produces(MediaType.APPLICATION_JSON)
+@ApplicationScoped
+public class CedarResource {
 
-    static final String NAME = "cedar";
-    static final int DEFAULT_PORT = 8180;
+    private static final Logger LOG = Logger.getLogger(CedarResource.class);
 
-    private static final BasicAuthorizationEngine ENGINE = new BasicAuthorizationEngine();
+    private final BasicAuthorizationEngine engine = new BasicAuthorizationEngine();
 
-    private CedarSidecar() {
+    /**
+     * Loads the Rust runtime at startup rather than on the first request, so a missing or
+     * unloadable library fails the process instead of answering {@code /health} with ok.
+     */
+    void onStart(@Observes StartupEvent event) {
+        EntityTypeName.parse("Sidecar::Probe").orElseThrow(() ->
+                new IllegalStateException("Cedar runtime probe failed"));
+        LOG.info("Cedar runtime loaded");
     }
 
-    public static void main(String[] args) throws IOException {
-        builder().start();
+    @POST
+    @Path("/entity-type/validate")
+    public JsonNode validateEntityType(String raw) throws Exception {
+        return validateEntityType(Json.body(raw));
     }
 
-    /** Starts on the given port; {@code 0} lets the OS choose. Tests use this. */
-    public static SidecarServer start(int port) throws IOException {
-        return builder().start(port);
+    @POST
+    @Path("/schema/validate")
+    public JsonNode validateSchema(String raw) throws Exception {
+        return validateSchema(Json.body(raw));
     }
 
-    private static SidecarServer.Builder builder() {
-        return SidecarServer.builder(NAME)
-                .defaultPort(DEFAULT_PORT)
-                .badRequestOn(AuthException.class)
-                .route("/v1/entity-type/validate", CedarSidecar::validateEntityType)
-                .route("/v1/schema/validate", CedarSidecar::validateSchema)
-                .route("/v1/policy/parse", CedarSidecar::parsePolicy)
-                .route("/v1/policy/validate", CedarSidecar::validatePolicy)
-                .route("/v1/authorize", CedarSidecar::authorize);
+    @POST
+    @Path("/policy/parse")
+    public JsonNode parsePolicy(String raw) throws Exception {
+        return parsePolicy(Json.body(raw));
+    }
+
+    @POST
+    @Path("/policy/validate")
+    public JsonNode validatePolicy(String raw) throws Exception {
+        return validatePolicy(Json.body(raw));
+    }
+
+    @POST
+    @Path("/authorize")
+    public JsonNode authorize(String raw) throws Exception {
+        return authorize(Json.body(raw));
     }
 
     private static JsonNode validateEntityType(JsonNode body) throws Exception {
@@ -113,7 +138,7 @@ public final class CedarSidecar {
         return response;
     }
 
-    private static JsonNode validatePolicy(JsonNode body) throws Exception {
+    private JsonNode validatePolicy(JsonNode body) throws Exception {
         Schema schema = Schema.parse(Schema.JsonOrCedar.Json, Json.requiredText(body, "schema"));
         String statement = Json.requiredText(body, "statement");
         boolean template = body.path("template").asBoolean(false);
@@ -121,14 +146,14 @@ public final class CedarSidecar {
                 ? Policy.parsePolicyTemplate(statement)
                 : Policy.parseStaticPolicy(statement);
         PolicySet set = template ? new PolicySet(Set.of(), Set.of(policy)) : new PolicySet(Set.of(policy));
-        ValidationResponse result = ENGINE.validate(new ValidationRequest(schema, set));
+        ValidationResponse result = engine.validate(new ValidationRequest(schema, set));
         if (!result.validationPassed()) {
             throw new IllegalArgumentException("The Cedar policy failed STRICT schema validation: " + result);
         }
         return Json.object().put("valid", true);
     }
 
-    private static JsonNode authorize(JsonNode body) throws Exception {
+    private JsonNode authorize(JsonNode body) throws Exception {
         JsonNode request = Json.requiredObject(body, "request");
         EntityUID principal = euid(request.get("principal"), "principal");
         EntityUID action = actionEuid(request.get("action"));
@@ -137,7 +162,7 @@ public final class CedarSidecar {
         Context context = context(request.get("context"));
         PolicySet policies = policySet(body.path("policies"), body.path("templates"));
 
-        AuthorizationResponse authorizationResponse = ENGINE.isAuthorized(new AuthorizationRequest(principal, action, resource, context), policies, entities);
+        AuthorizationResponse authorizationResponse = engine.isAuthorized(new AuthorizationRequest(principal, action, resource, context), policies, entities);
         AuthorizationSuccessResponse response = authorizationResponse.success.orElseThrow(() ->
                 new IllegalArgumentException("Cedar authorization failed."));
         ObjectNode out = Json.object();

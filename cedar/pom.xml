@@ -16,6 +16,8 @@
 
   <properties>
     <cedar.version>4.10.0</cedar.version>
+    <!-- Set by the os-activated profiles below: the one native library this build needs. -->
+    <cedar.ffi.lib>UNSUPPORTED_PLATFORM</cedar.ffi.lib>
   </properties>
 
   <dependencies>
@@ -24,14 +26,23 @@
       <artifactId>sidecar-core</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-config-yaml</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.cedarpolicy</groupId>
       <artifactId>cedar-java</artifactId>
       <version>${cedar.version}</version>
       <classifier>uber</classifier>
     </dependency>
     <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-junit</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.rest-assured</groupId>
+      <artifactId>rest-assured</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -42,24 +53,99 @@
   </dependencies>
 
   <build>
-    <!-- A stable jar name so the Dockerfile never carries a version. -->
+    <!-- A stable name so the Dockerfiles and failsafe never carry a version: target/sidecar-runner. -->
     <finalName>sidecar</finalName>
     <plugins>
+      <plugin>
+        <groupId>io.quarkus.platform</groupId>
+        <artifactId>quarkus-maven-plugin</artifactId>
+      </plugin>
+      <!-- cedar-java's uber jar bundles its Rust runtime for five platforms (80 MB). Only this
+           platform's library is unpacked, next to the build output, and handed to the sidecar
+           through CEDAR_JAVA_FFI_LIB so the loader takes the plain System.load path. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
         <executions>
           <execution>
-            <id>copy-runtime-dependencies</id>
-            <phase>package</phase>
-            <goals><goal>copy-dependencies</goal></goals>
+            <id>stage-cedar-native-library</id>
+            <phase>prepare-package</phase>
+            <goals><goal>unpack</goal></goals>
             <configuration>
-              <includeScope>runtime</includeScope>
-              <outputDirectory>${project.build.directory}/dependency</outputDirectory>
+              <artifactItems>
+                <artifactItem>
+                  <groupId>com.cedarpolicy</groupId>
+                  <artifactId>cedar-java</artifactId>
+                  <version>${cedar.version}</version>
+                  <classifier>uber</classifier>
+                  <outputDirectory>${project.build.directory}/cedar-native</outputDirectory>
+                  <includes>${cedar.ffi.lib}</includes>
+                </artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+            <configuration>
+              <environmentVariables>
+                <CEDAR_JAVA_FFI_LIB>${project.build.directory}/cedar-native/${cedar.ffi.lib}</CEDAR_JAVA_FFI_LIB>
+              </environmentVariables>
             </configuration>
           </execution>
         </executions>
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>ffi-linux-x86_64</id>
+      <activation>
+        <os><name>Linux</name><arch>amd64</arch></os>
+      </activation>
+      <properties>
+        <cedar.ffi.lib>jne/linux/x86_64/libcedar_java_ffi.so</cedar.ffi.lib>
+      </properties>
+    </profile>
+    <profile>
+      <id>ffi-linux-aarch64</id>
+      <activation>
+        <os><name>Linux</name><arch>aarch64</arch></os>
+      </activation>
+      <properties>
+        <cedar.ffi.lib>jne/linux/aarch64/libcedar_java_ffi.so</cedar.ffi.lib>
+      </properties>
+    </profile>
+    <profile>
+      <id>ffi-macos-aarch64</id>
+      <activation>
+        <os><family>mac</family><arch>aarch64</arch></os>
+      </activation>
+      <properties>
+        <cedar.ffi.lib>jne/macos/aarch64/libcedar_java_ffi.dylib</cedar.ffi.lib>
+      </properties>
+    </profile>
+    <profile>
+      <id>ffi-macos-x86_64</id>
+      <activation>
+        <os><family>mac</family><arch>x86_64</arch></os>
+      </activation>
+      <properties>
+        <cedar.ffi.lib>jne/macos/x86_64/libcedar_java_ffi.dylib</cedar.ffi.lib>
+      </properties>
+    </profile>
+  </profiles>
 </project>

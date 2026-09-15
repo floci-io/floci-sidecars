@@ -1,0 +1,28 @@
+sidecar:
+  name: cedar
+
+quarkus:
+  http:
+    # The contract's PORT variable; 8180 is this sidecar's documented default.
+    port: ${PORT:8180}
+    host: 0.0.0.0
+    limits:
+      max-body-size: 32M
+  banner:
+    enabled: false
+  native:
+    resources:
+      excludes:
+        # The five platform builds of the Rust runtime never go into the binary; the image
+        # ships one of them next to the executable and points CEDAR_JAVA_FFI_LIB at it.
+        - jne/**
+    additional-build-args:
+      # Quarkus initialises classes at build time. Eight cedar-java classes load the Rust
+      # runtime from their static initializers and SharedCedarInternals starts a Cleaner
+      # thread, so the whole library runs its initializers at run time.
+      - --initialize-at-run-time=com.cedarpolicy
+
+"%test":
+  quarkus:
+    http:
+      test-port: 0
