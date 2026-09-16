@@ -2,9 +2,10 @@ Guidance for AI coding agents working in the Floci Sidecars repository.
 
 ## What this repository is
 
-One directory per sidecar, plus `sidecar-core`, the shared Java bootstrap. A sidecar is a
+One directory per sidecar, plus `sidecar-core`, the shared Quarkus providers. A sidecar is a
 stateless HTTP service that an emulator starts as a container. It must implement
-`docs/contract.md` and must not know which emulator is calling it.
+`docs/contract.md` and must not know which emulator is calling it. Every sidecar is a Quarkus
+application compiled to a GraalVM native executable; `sidecar-core` is a plain library jar.
 
 ## Rules
 
@@ -20,7 +21,18 @@ stateless HTTP service that an emulator starts as a container. It must implement
   tags `<name>-vX.Y.Z`; the Docker build receives it as `SIDECAR_VERSION`. Maven versions stay
   `0.0.0-SNAPSHOT`.
 - **Dockerfiles build from the repository root** (`docker build -f <name>/Dockerfile .`) and copy
-  only what `.dockerignore` allows. When you add a sidecar, add its paths there.
+  only what `.dockerignore` allows. When you add a sidecar, add its paths there. `Dockerfile` is
+  the local Mandrel build; `Dockerfile.package` only packages a CI-built executable from
+  `native/<arch>/`. Both must stay identical below the build stage.
+- **Native-image configuration belongs to the sidecar that needs it.** Reflection registrations
+  (`@RegisterForReflection(classNames = ...)`), `META-INF/native-image/**/jni-config.json` for a
+  library's JNI callbacks, and `quarkus.native.additional-build-args` such as
+  `--initialize-at-run-time=<package>` for any library that loads a native runtime from a static
+  initializer. Never widen these blindly: derive them from the library's sources or the native
+  library's string table, and prove them with the `*IT` tests under `-Dnative`.
+- **A native library ships as one file per architecture**, unpacked from its jar at
+  `prepare-package` and handed to the process by an environment variable the image sets. Never
+  embed the jar's other platform builds in the executable (`quarkus.native.resources.excludes`).
 - **Conventional Commits, scoped by sidecar**: `feat(cedar): ...`, `fix(core): ...`,
   `ci: ...`, `docs: ...`. release-please derives each sidecar's version from the commits that
   touch its directory.
@@ -40,14 +52,15 @@ stateless HTTP service that an emulator starts as a container. It must implement
 ## Tests
 
 - JUnit 5, Hamcrest matchers. Test methods are camelCase sentences or `method_scenario_expectation`.
-- A sidecar's tests start it in-process on port 0 and speak HTTP to it; that is the same surface
-  the emulator uses.
-- `./mvnw verify` must pass before a commit. `docker build -f <name>/Dockerfile .` must succeed
-  when the Dockerfile or `.dockerignore` changed.
+- A sidecar's tests are `@QuarkusTest` classes speaking HTTP through RestAssured; that is the
+  same surface the emulator uses. Each has an `*IT` subclass annotated `@QuarkusIntegrationTest`
+  that runs the same tests against the packaged executable under `-Dnative`.
+- `./mvnw verify` must pass before a commit, and `./mvnw -pl <name> -am verify -Dnative` when
+  anything touching native configuration, dependencies or the Dockerfiles changed.
 
 ## Build & run
 
     ./mvnw verify
-    ./mvnw -pl cedar -am verify
+    ./mvnw -pl cedar -am verify -Dnative
     docker build -f cedar/Dockerfile --build-arg SIDECAR_VERSION=0.0.0-local -t floci-sidecar-cedar:local .
     docker run --rm -p 8180:8180 floci-sidecar-cedar:local

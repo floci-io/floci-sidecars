@@ -18,6 +18,8 @@ enough to fix a bug or add an endpoint.
 
 - Java 25+ (the Maven wrapper downloads Maven itself)
 - Docker, to build and run an image
+- For a native build outside Docker: GraalVM or Mandrel for Java 25 with `native-image` on the
+  PATH, and about 4 GB of free memory
 
 If you need to install a JDK, [SDKMAN](https://sdkman.io/) is a convenient option:
 
@@ -25,6 +27,7 @@ If you need to install a JDK, [SDKMAN](https://sdkman.io/) is a convenient optio
 curl -s "https://get.sdkman.io" | bash
 source "$HOME/.sdkman/bin/sdkman-init.sh"
 sdk install java 25-tem
+sdk install java 25.0.3-graal   # optional: native-image for ./mvnw ... -Dnative
 ```
 
 ### Build & Test
@@ -33,19 +36,34 @@ sdk install java 25-tem
 git clone https://github.com/floci-io/floci-sidecars.git
 cd floci-sidecars
 
-./mvnw verify                              # every module
+./mvnw verify                              # every module, on the JVM
 ./mvnw -pl cedar -am verify                # one sidecar and what it depends on
 ./mvnw -pl cedar -am test -Dtest=CedarSidecarTest#authorizeLetsForbidOverridePermit
+./mvnw -pl cedar -am verify -Dnative       # native executable, then CedarSidecarIT against it
 ```
+
+The `-Dnative` run is what CI does on both architectures. It is the only run that proves a
+sidecar's JNI and reflection configuration, so use it whenever you touch `application.yml`,
+`META-INF/native-image`, a dependency or a Dockerfile.
 
 ### Try it as an image
 
-Always build from the repository root; a sidecar's Dockerfile copies `sidecar-core` too.
+Always build from the repository root; a sidecar's Dockerfile copies `sidecar-core` too. The
+local Dockerfile compiles natively inside the Mandrel builder image, which needs Docker to have
+about 6 GB of memory and takes a few minutes.
 
 ```bash
 docker build -f cedar/Dockerfile --build-arg SIDECAR_VERSION=0.0.0-local -t floci-sidecar-cedar:local .
 docker run --rm -p 8180:8180 floci-sidecar-cedar:local
 curl -s localhost:8180/health
+```
+
+To run the executable without Docker, point it at this platform's Cedar runtime, which the
+build unpacked from the cedar-java jar:
+
+```bash
+CEDAR_JAVA_FFI_LIB=$PWD/cedar/target/cedar-native/jne/macos/aarch64/libcedar_java_ffi.dylib \
+  PORT=8180 ./cedar/target/sidecar-runner
 ```
 
 To run Floci against your local build, point it at the image or at the running container:
@@ -72,16 +90,21 @@ ln -s AGENTS.md GEMINI.md
 - **No emulator vocabulary across the HTTP boundary.** A sidecar answers a generic question
   (is this authorized, run this query). AWS, GCP or Azure service names, error codes and field
   names belong to the emulator that calls it.
-- **Register only `/v1/*` handlers.** `PORT`, `/health`, JSON parsing and the 400/405/500
-  envelope come from `SidecarServer` in `sidecar-core`. Do not add a second health endpoint or
-  parse the body yourself.
-- **A rejected request is `IllegalArgumentException`** (or a type registered with
-  `badRequestOn`), which becomes `400`. Anything else is `500` and gets logged.
+- **Write only `/v1/*` JAX-RS resources.** `PORT`, `/health` and the 400/404/405/500 envelope
+  come from `sidecar-core`. Take the body as a `String` and parse it with `Json.body`, so an
+  empty or malformed body answers the contract's 400 rather than a framework default.
+- **A rejected request is `IllegalArgumentException`** (or a type your `BadRequestTypes` bean
+  lists), which becomes `400`. Anything else is `500` and gets logged.
+- **Native-image configuration is derived, not guessed.** Reflection registrations and
+  `jni-config.json` entries must be traceable to a library source or its native library's
+  string table, and the `*IT` run under `-Dnative` is the proof. A library that loads natives
+  from a static initializer goes on `--initialize-at-run-time`.
 - **Stateless.** Everything a request needs travels in the request. Nothing written to disk may
   be relied on to survive.
-- **Tests start the sidecar in-process on port 0 and speak HTTP.** That is the surface the
-  emulator uses, so it is the surface that is tested. `./mvnw verify` must pass, and the Docker
-  build must succeed when the Dockerfile or `.dockerignore` changed.
+- **Tests are `@QuarkusTest` classes speaking HTTP through RestAssured**, plus an `*IT`
+  subclass with `@QuarkusIntegrationTest` for the native run. That is the surface the emulator
+  uses, so it is the surface that is tested. `./mvnw verify` must pass, and
+  `./mvnw -pl <name> -am verify -Dnative` when native configuration or a Dockerfile changed.
 - **Style follows [floci-io/floci](https://github.com/floci-io/floci)**: no `var`, explicit
   imports, braces always, JBoss logging in a `LOG` field, no em-dashes anywhere.
 
