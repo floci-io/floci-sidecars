@@ -10,7 +10,7 @@ name: Release
 # gets only the given tag, never latest, so a consumer can pin an unreleased
 # change while its own pull request is open.
 #
-# Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+# Required secrets (org level, shared with floci): GH_TOKEN, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
 
 on:
   push:
@@ -50,6 +50,10 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
+          # The org-level PAT, as in floci: the default GITHUB_TOKEN may not open
+          # pull requests here, and a PR or tag it creates never triggers CI or
+          # other workflows. Needs Contents and Pull requests read/write.
+          token: ${{ secrets.GH_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
