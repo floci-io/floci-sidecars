@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify every module
+    name: Verify every module (JVM)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -43,30 +43,46 @@ jobs:
           path: '**/target/surefire-reports/'
           if-no-files-found: ignore
 
-  image:
-    name: Build image (${{ matrix.sidecar }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  # Every sidecar ships as a native executable. Both published architectures build on PRs:
+  # the JNI and reflection configuration is only proven by running the *IT classes against
+  # the binary, and one architecture cannot prove the other.
+  native:
+    name: Native ${{ matrix.sidecar }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         sidecar: [cedar]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            # The CPU floor Floci's own image uses; GraalVM's default would be x86-64-v3.
+            march: -Dquarkus.native.additional-build-args-append=-march=x86-64-v2
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            march: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-
-      - name: Build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: graalvm/setup-graalvm@5298d94fb55a4f185c602eeac5de1b553882abe2 # v1
         with:
-          context: .
-          file: ${{ matrix.sidecar }}/Dockerfile
-          load: true
-          push: false
-          tags: floci-sidecar-${{ matrix.sidecar }}:ci
-          build-args: SIDECAR_VERSION=0.0.0-ci
-          cache-from: type=gha,scope=${{ matrix.sidecar }}
-          cache-to: type=gha,scope=${{ matrix.sidecar }},mode=max
+          java-version: '25'
+          distribution: 'mandrel'
+          cache: maven
+
+      - name: Build the native executable and run the integration tests against it
+        run: ./mvnw -B -pl ${{ matrix.sidecar }} -am verify -Dnative ${{ matrix.march }}
+
+      - name: Stage the executable and its native library
+        run: |
+          mkdir -p native/${{ matrix.arch }}
+          cp ${{ matrix.sidecar }}/target/sidecar-runner native/${{ matrix.arch }}/application
+          find ${{ matrix.sidecar }}/target/cedar-native -name '*.so' -exec cp {} native/${{ matrix.arch }}/ \; 2>/dev/null || true
+          ls -la native/${{ matrix.arch }}
+
+      - name: Package the image
+        run: docker build -f ${{ matrix.sidecar }}/Dockerfile.package --build-arg SIDECAR_VERSION=0.0.0-ci -t floci-sidecar-${{ matrix.sidecar }}:ci .
 
       # The contract's observable surface: the labels, a non-root user, and a
       # health response that names the sidecar and the contract major.

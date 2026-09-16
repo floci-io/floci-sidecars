@@ -43,6 +43,8 @@ jobs:
     outputs:
       paths_released: ${{ steps.release.outputs.paths_released }}
       releases_created: ${{ steps.release.outputs.releases_created }}
+      # One line per sidecar: release-please exposes <path>--version per released package.
+      cedar--version: ${{ steps.release.outputs.cedar--version }}
     steps:
       # Pin to a commit SHA after the first successful run, like every other action here.
       - uses: googleapis/release-please-action@v4
@@ -57,50 +59,40 @@ jobs:
     name: Publish ${{ matrix.sidecar }}
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         sidecar: ${{ fromJson(needs.release-please.outputs.paths_released) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Resolve version
-        id: version
-        run: |
-          version="$(tr -d '[:space:]' < "${{ matrix.sidecar }}/version.txt")"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "publishing ${{ matrix.sidecar }} $version"
-
-      - uses: ./.github/actions/publish-sidecar
-        with:
-          sidecar: ${{ matrix.sidecar }}
-          version: ${{ steps.version.outputs.version }}
-          latest: 'true'
-          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+    uses: ./.github/workflows/publish-sidecar.yml
+    with:
+      sidecar: ${{ matrix.sidecar }}
+      # release-please just bumped <sidecar>/version.txt; the reusable workflow reads the tag from here.
+      version: ${{ needs.release-please.outputs[format('{0}--version', matrix.sidecar)] }}
+      latest: true
+    secrets: inherit
 
   publish-prerelease:
     name: Publish ${{ inputs.sidecar }} ${{ inputs.version }}
     if: github.event_name == 'workflow_dispatch'
+    needs: guard-prerelease
+    uses: ./.github/workflows/publish-sidecar.yml
+    with:
+      sidecar: ${{ inputs.sidecar }}
+      version: ${{ inputs.version }}
+      latest: false
+    secrets: inherit
+
+  guard-prerelease:
+    name: Refuse a final version from the manual path
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Refuse a final version from the manual path
-        run: |
+      - run: |
           case "${{ inputs.version }}" in
             *-*) ;;
             *) echo "::error::manual publishes are for prereleases (X.Y.Z-rc.N); final versions come from release-please"; exit 1 ;;
           esac
-          test -f "${{ inputs.sidecar }}/Dockerfile" || { echo "::error::no such sidecar: ${{ inputs.sidecar }}"; exit 1; }
-
-      - uses: ./.github/actions/publish-sidecar
-        with:
-          sidecar: ${{ inputs.sidecar }}
-          version: ${{ inputs.version }}
-          latest: 'false'
-          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          test -f "${{ inputs.sidecar }}/Dockerfile.package" || { echo "::error::no such sidecar: ${{ inputs.sidecar }}"; exit 1; }

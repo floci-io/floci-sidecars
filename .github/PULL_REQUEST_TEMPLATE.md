@@ -21,8 +21,8 @@
 ## Checklist
 
 - [ ] `./mvnw verify` passes locally
-- [ ] `docker build -f <sidecar>/Dockerfile .` succeeds (when the Dockerfile or `.dockerignore` changed)
-- [ ] New or updated test in `<sidecar>/src/test` speaking HTTP to the in-process sidecar
+- [ ] `./mvnw -pl <sidecar> -am verify -Dnative` passes (when native configuration, a dependency or a Dockerfile changed)
+- [ ] New or updated `@QuarkusTest` in `<sidecar>/src/test` speaking HTTP, covered by the `*IT` subclass
 - [ ] `<sidecar>/API.md` updated for any endpoint or payload change
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) with the sidecar as scope
 
