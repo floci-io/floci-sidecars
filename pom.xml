@@ -25,6 +25,7 @@
   <modules>
     <module>sidecar-core</module>
     <module>cedar</module>
+    <module>graphql</module>
   </modules>
 
   <properties>

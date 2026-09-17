@@ -17,6 +17,7 @@ are [Quarkus](https://quarkus.io) applications compiled to native executables wi
 | Sidecar | Image | Port | What it does |
 |---|---|---|---|
 | [cedar](cedar/) | `floci/floci-sidecar-cedar` | 8180 | Cedar 4 policy parsing, schema validation and authorization (Amazon Verified Permissions) |
+| [graphql](graphql/) | `floci/floci-sidecar-graphql` | 8181 | graphql-java schema validation, query planning and execution (AWS AppSync) |
 
 Images are published to Docker Hub, tagged with the
 sidecar's own semantic version and `latest`, for `linux/amd64` and `linux/arm64`.

@@ -45,6 +45,7 @@ jobs:
       releases_created: ${{ steps.release.outputs.releases_created }}
       # One line per sidecar: release-please exposes <path>--version per released package.
       cedar--version: ${{ steps.release.outputs.cedar--version }}
+      graphql--version: ${{ steps.release.outputs.graphql--version }}
     steps:
       # Pin to a commit SHA after the first successful run, like every other action here.
       - uses: googleapis/release-please-action@v4
