@@ -1,0 +1,24 @@
+sidecar:
+  name: graphql
+
+quarkus:
+  http:
+    # The contract's PORT variable; 8181 is this sidecar's documented default.
+    port: ${PORT:8181}
+    host: 0.0.0.0
+    limits:
+      max-body-size: 32M
+  banner:
+    enabled: false
+  native:
+    additional-build-args:
+      # graphql.util.IdGenerator creates a SecureRandom from a static initializer.
+      - --initialize-at-run-time=graphql.util.IdGenerator
+      # graphql-java loads its parser/validation/execution error messages from resource bundles
+      # (i18n/Parsing.properties and friends) that native-image does not include by default.
+      - -H:IncludeResourceBundles=i18n.Parsing,i18n.Validation,i18n.Execution,i18n.General,i18n.Scalars
+
+"%test":
+  quarkus:
+    http:
+      test-port: 0

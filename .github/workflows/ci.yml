@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sidecar: [cedar]
+        sidecar: [cedar, graphql]
         include:
           - arch: amd64
             runner: ubuntu-latest

@@ -15,6 +15,12 @@
       "component": "cedar",
       "package-name": "floci-sidecar-cedar",
       "extra-files": []
+    },
+    "graphql": {
+      "release-type": "simple",
+      "component": "graphql",
+      "package-name": "floci-sidecar-graphql",
+      "extra-files": []
     }
   }
 }

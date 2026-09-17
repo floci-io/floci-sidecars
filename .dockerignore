@@ -6,4 +6,6 @@
 !sidecar-core/src/main/**
 !cedar/pom.xml
 !cedar/src/main/**
+!graphql/pom.xml
+!graphql/src/main/**
 !native/**
