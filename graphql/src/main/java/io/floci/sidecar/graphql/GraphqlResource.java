@@ -33,6 +33,8 @@ import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
 import graphql.schema.idl.TypeDefinitionRegistry;
 import graphql.schema.idl.errors.SchemaProblem;
+import graphql.schema.DataFetchingFieldSelectionSet;
+import graphql.schema.SelectedField;
 import io.floci.sidecar.core.Json;
 import io.floci.sidecar.graphql.scalars.ScalarKinds;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -41,11 +43,18 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
+import org.dataloader.BatchLoader;
+import org.dataloader.DataLoader;
+import org.dataloader.DataLoaderFactory;
+import org.dataloader.DataLoaderRegistry;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Stateless HTTP boundary around graphql-java: SDL parsing/schema generation, query planning and
@@ -64,6 +73,9 @@ public class GraphqlResource {
 
     /** Scalars graphql-java's RuntimeWiring registers by default; anything else needs a wiring entry. */
     private static final List<String> BUILTIN_SCALAR_NAMES = List.of("Int", "Float", "String", "Boolean", "ID");
+
+    /** One shared loader per execution: every resolve-wired coordinate batches into it together. */
+    private static final String RESOLVE_LOADER = "floci-resolve";
 
     private final SchemaCache schemaCache;
 
@@ -173,16 +185,27 @@ public class GraphqlResource {
         }
 
         GraphQLSchema schema = buildSchema(sdl, scalars);
+        Set<String> deniedCoordinates = new LinkedHashSet<>();
         if (!denyFields.isEmpty()) {
             schema = applyDenyFields(schema, denyFields);
+            denyFields.forEach(entry -> deniedCoordinates.add(entry.typeName() + "." + entry.fieldName()));
         }
-        GraphQL graphQL = GraphQL.newGraphQL(schema).build();
+
         ExecutionInput.Builder input = ExecutionInput.newExecutionInput()
                 .query(query)
                 .variables(variables);
+        ResolveConfig resolveConfig = ResolveConfig.from(body);
+        if (resolveConfig != null) {
+            schema = applyResolve(schema, resolveConfig, deniedCoordinates);
+            DataLoaderRegistry registry = new DataLoaderRegistry();
+            registry.register(RESOLVE_LOADER, DataLoaderFactory.newDataLoader(batchLoaderFor(resolveConfig)));
+            input.dataLoaderRegistry(registry);
+        }
         if (operationName != null && !operationName.isBlank()) {
             input.operationName(operationName);
         }
+
+        GraphQL graphQL = GraphQL.newGraphQL(schema).build();
         ExecutionResult result = graphQL.execute(input.build());
         return Json.mapper().valueToTree(result.toSpecification());
     }
@@ -263,6 +286,100 @@ public class GraphqlResource {
                         .path(env.getExecutionStepInfo().getPath().toList())
                         .build())
                 .build();
+    }
+
+    /**
+     * Wires a {@link DataLoader}-backed fetcher for every listed coordinate not already denied,
+     * so {@code denyFields} always wins: a denied field never reaches the callback.
+     */
+    private static GraphQLSchema applyResolve(GraphQLSchema schema, ResolveConfig config, Set<String> deniedCoordinates) {
+        GraphQLCodeRegistry.Builder code = GraphQLCodeRegistry.newCodeRegistry(schema.getCodeRegistry());
+        for (ResolveConfig.Field field : config.fields()) {
+            if (deniedCoordinates.contains(field.coordinate())) {
+                continue;
+            }
+            code.dataFetcher(FieldCoordinates.coordinates(field.typeName(), field.fieldName()),
+                    resolvingDataFetcher(field.typeName(), field.fieldName()));
+        }
+        GraphQLCodeRegistry registry = code.build();
+        return schema.transform(builder -> builder.codeRegistry(registry));
+    }
+
+    /**
+     * Every resolve-wired coordinate shares the same {@link #RESOLVE_LOADER}, so graphql-java's
+     * per-level dispatch collects everything due at a level, across every coordinate, into a
+     * single batch: that is what turns a level into one callback call rather than one per field.
+     */
+    private static DataFetcher<Object> resolvingDataFetcher(String typeName, String fieldName) {
+        return env -> {
+            DataLoader<InvocationKey, FieldOutcome> loader = env.getDataLoader(RESOLVE_LOADER);
+            InvocationKey key = new InvocationKey(
+                    typeName,
+                    fieldName,
+                    env.getArguments(),
+                    env.getSource(),
+                    env.getExecutionStepInfo().getPath().toList(),
+                    env.getVariables(),
+                    selectionSetListOf(env.getSelectionSet()));
+            List<Object> path = env.getExecutionStepInfo().getPath().toList();
+            return loader.load(key).handle((outcome, throwable) -> toResult(outcome, throwable, path));
+        };
+    }
+
+    private static DataFetcherResult<Object> toResult(FieldOutcome outcome, Throwable throwable, List<Object> path) {
+        if (throwable != null) {
+            return DataFetcherResult.newResult()
+                    .error(GraphqlErrorBuilder.newError().message(safeMessage(throwable)).path(path).build())
+                    .build();
+        }
+        if (outcome.error() != null) {
+            FieldOutcome.FieldError error = outcome.error();
+            Map<String, Object> extensions = new LinkedHashMap<>();
+            extensions.put("type", error.type());
+            extensions.put("data", error.data());
+            extensions.put("info", error.info());
+            return DataFetcherResult.newResult()
+                    .data(null)
+                    .error(GraphqlErrorBuilder.newError().message(error.message()).extensions(extensions).path(path).build())
+                    .build();
+        }
+        return DataFetcherResult.newResult().data(outcome.data()).build();
+    }
+
+    private static List<String> selectionSetListOf(DataFetchingFieldSelectionSet selectionSet) {
+        return selectionSet.getFields().stream().map(SelectedField::getQualifiedName).toList();
+    }
+
+    /**
+     * graphql-java hands every field due at one execution level to this single call. Splitting
+     * it at {@code maxBatch} keeps one HTTP call from growing unbounded, and isolates a failed
+     * chunk's fields from every other chunk's, since each chunk is called and reported separately.
+     */
+    private static BatchLoader<InvocationKey, FieldOutcome> batchLoaderFor(ResolveConfig config) {
+        return keys -> {
+            List<List<InvocationKey>> chunks = partition(keys, config.maxBatch());
+            List<CompletableFuture<List<FieldOutcome>>> chunkCalls = chunks.stream()
+                    .map(chunk -> ResolveCallbackClient.resolve(config, chunk))
+                    .toList();
+            return CompletableFuture.allOf(chunkCalls.toArray(new CompletableFuture[0]))
+                    .thenApply(ignored -> chunkCalls.stream()
+                            .flatMap(call -> call.join().stream())
+                            .toList());
+        };
+    }
+
+    private static <T> List<List<T>> partition(List<T> items, int size) {
+        List<List<T>> chunks = new ArrayList<>();
+        for (int start = 0; start < items.size(); start += size) {
+            chunks.add(items.subList(start, Math.min(start + size, items.size())));
+        }
+        return chunks;
+    }
+
+    private static String safeMessage(Throwable throwable) {
+        Throwable cause = throwable.getCause() != null ? throwable.getCause() : throwable;
+        String message = cause.getMessage();
+        return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
     }
 
     private GraphQLSchema buildSchema(String sdl, Map<String, String> scalars) {
