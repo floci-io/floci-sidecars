@@ -10,6 +10,8 @@ import graphql.schema.GraphQLScalarType;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -78,8 +80,21 @@ class ScalarKindsTest {
     void jsonString_parseValue() {
         Coercing<Object, Object> coercing = scalar("AWSJSON", "json-string");
 
-        assertThat(coercing.parseValue("{\"key\": \"value\"}"), is("{\"key\": \"value\"}"));
+        assertThat(coercing.parseValue("{\"key\": \"value\"}"), is(Map.of("key", "value")));
+        assertThat(coercing.parseValue("[1, \"two\"]"), is(List.of(1, "two")));
+        assertThat(coercing.parseValue("\"text\""), is("text"));
+        assertThat(coercing.parseValue("3"), is(3));
         assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("not json"));
+        assertThrows(CoercingParseValueException.class, () -> coercing.parseValue(Map.of("key", "value")));
+    }
+
+    @Test
+    void jsonString_parseLiteralAndSerialize() {
+        Coercing<Object, Object> coercing = scalar("AWSJSON", "json-string");
+
+        assertThat(coercing.parseLiteral(new StringValue("{\"key\": [true]}")), is(Map.of("key", List.of(true))));
+        assertThat(coercing.serialize(Map.of("key", "value")), is("{\"key\":\"value\"}"));
+        assertThat(coercing.serialize("{\"as\":\"answered\"}"), is("{\"as\":\"answered\"}"));
     }
 
     @Test

@@ -77,11 +77,16 @@ public final class ScalarKinds {
         return factory == null ? Optional.empty() : Optional.of(factory.apply(name));
     }
 
+    /**
+     * A JSON string: an input is JSON text, parsed into the structure it holds, a map, a list or a
+     * scalar, which is what the resolver is handed; an output is that structure written back as JSON
+     * text, or a string the resolver answered, as it is.
+     */
     private static GraphQLScalarType jsonString(String name) {
         return GraphQLScalarType.newScalar()
                 .name(name)
                 .description("A JSON string")
-                .coercing(new Coercing<String, String>() {
+                .coercing(new Coercing<Object, String>() {
                     @Override
                     public String serialize(Object dataFetcherResult) {
                         if (dataFetcherResult == null) {
@@ -98,18 +103,17 @@ public final class ScalarKinds {
                     }
 
                     @Override
-                    public String parseValue(Object input) {
+                    public Object parseValue(Object input) {
                         String str = input.toString();
                         try {
-                            MAPPER.readTree(str);
+                            return MAPPER.readValue(str, Object.class);
                         } catch (Exception e) {
                             throw new CoercingParseValueException("Invalid " + name + ": " + str);
                         }
-                        return str;
                     }
 
                     @Override
-                    public String parseLiteral(Object input) {
+                    public Object parseLiteral(Object input) {
                         if (!(input instanceof StringValue sv)) {
                             return null;
                         }
