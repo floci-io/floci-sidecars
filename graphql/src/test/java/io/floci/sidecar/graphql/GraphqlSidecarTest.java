@@ -28,6 +28,7 @@ class GraphqlSidecarTest {
             type Query { pet: Animal }
             """;
     private static final String SCALAR_SDL = "scalar MyDateTime\ntype Query { echo(t: MyDateTime): MyDateTime }";
+    private static final String URL_SCALAR_SDL = "scalar MyUrl\ntype Query { echo(url: MyUrl): MyUrl }";
 
     @Test
     void healthDescribesTheGraphqlSidecar() {
@@ -113,6 +114,25 @@ class GraphqlSidecarTest {
     }
 
     @Test
+    void executeAcceptsHttpsAndMailtoLiteralsAndVariablesForAUrlScalar() throws Exception {
+        String scalars = "{\"MyUrl\":\"url\"}";
+        String httpsUrl = "https://example.com/a";
+        String mailtoUrl = "mailto:a@example.com";
+        Response httpsLiteral = post("/v1/execute", urlScalarBody(scalars,
+                "{ echo(url: " + Json.mapper().writeValueAsString(httpsUrl) + ") }", null));
+        Response mailtoLiteral = post("/v1/execute", urlScalarBody(scalars,
+                "{ echo(url: " + Json.mapper().writeValueAsString(mailtoUrl) + ") }", null));
+        String variableQuery = "query($url: MyUrl) { echo(url: $url) }";
+        Response httpsVariable = post("/v1/execute", urlScalarBody(scalars, variableQuery, httpsUrl));
+        Response mailtoVariable = post("/v1/execute", urlScalarBody(scalars, variableQuery, mailtoUrl));
+
+        for (Response response : new Response[] {httpsLiteral, mailtoLiteral, httpsVariable, mailtoVariable}) {
+            assertThat(response.statusCode(), equalTo(200));
+            assertFalse(json(response).has("errors"));
+        }
+    }
+
+    @Test
     void schemaCacheHitProducesTheSameResultAsACold() throws Exception {
         Response first = post("/v1/execute", Json.object().put("sdl", SDL).put("query", "{ hello }").toString());
         Response second = post("/v1/execute", Json.object().put("sdl", SDL).put("query", "{ hello }").toString());
@@ -128,5 +148,14 @@ class GraphqlSidecarTest {
 
     private static Response post(String path, String body) {
         return given().contentType(ContentType.JSON).body(body).post(path);
+    }
+
+    private static String urlScalarBody(String scalars, String query, String variable) throws Exception {
+        String body = "{\"sdl\":" + Json.mapper().writeValueAsString(URL_SCALAR_SDL) + ",\"scalars\":" + scalars
+                + ",\"query\":" + Json.mapper().writeValueAsString(query);
+        if (variable != null) {
+            body += ",\"variables\":{\"url\":" + Json.mapper().writeValueAsString(variable) + "}";
+        }
+        return body + "}";
     }
 }
