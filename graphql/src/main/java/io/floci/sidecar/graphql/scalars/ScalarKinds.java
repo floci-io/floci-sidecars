@@ -15,6 +15,7 @@ import graphql.schema.GraphQLScalarType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -300,8 +301,19 @@ public final class ScalarKinds {
                     public String parseValue(Object input) {
                         String str = input.toString();
                         try {
-                            URI.create(str).toURL();
-                        } catch (Exception e) {
+                            URI uri = URI.create(str);
+                            String scheme = uri.getScheme();
+                            if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                                uri = uri.parseServerAuthority();
+                                if (uri.getHost() == null) {
+                                    throw new IllegalArgumentException("HTTP URL must include a host");
+                                }
+                            }
+                            String path = uri.getRawPath();
+                            if (!uri.isAbsolute() || (path != null && path.contains("//"))) {
+                                throw new IllegalArgumentException("Invalid URL syntax");
+                            }
+                        } catch (IllegalArgumentException | URISyntaxException e) {
                             throw new CoercingParseValueException("Invalid " + name + ": " + str);
                         }
                         return str;
