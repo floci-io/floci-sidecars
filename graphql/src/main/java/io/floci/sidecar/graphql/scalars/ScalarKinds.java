@@ -300,8 +300,12 @@ public final class ScalarKinds {
                     public String parseValue(Object input) {
                         String str = input.toString();
                         try {
-                            URI.create(str).toURL();
-                        } catch (Exception e) {
+                            URI uri = URI.create(str);
+                            String path = uri.getRawPath();
+                            if (!uri.isAbsolute() || (path != null && path.contains("//"))) {
+                                throw new IllegalArgumentException("Invalid URL syntax");
+                            }
+                        } catch (IllegalArgumentException e) {
                             throw new CoercingParseValueException("Invalid " + name + ": " + str);
                         }
                         return str;

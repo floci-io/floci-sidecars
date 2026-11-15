@@ -112,7 +112,22 @@ class ScalarKindsTest {
         Coercing<Object, Object> coercing = scalar("AWSURL", "url");
 
         assertThat(coercing.parseValue("https://example.com"), is("https://example.com"));
+        assertThat(coercing.parseValue("https://example.com/a"), is("https://example.com/a"));
+        assertThat(coercing.parseValue("mailto:a@example.com"), is("mailto:a@example.com"));
         assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("not a url"));
+        assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("/relative/path"));
+        assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("https://example.com/a//b"));
+    }
+
+    @Test
+    void url_parseLiteral_acceptsHttpsAndMailtoAndRejectsDoubleSlashInPath() {
+        Coercing<Object, Object> coercing = scalar("AWSURL", "url");
+
+        assertThat(coercing.parseLiteral(new StringValue("https://example.com/a")),
+                is("https://example.com/a"));
+        assertThat(coercing.parseLiteral(new StringValue("mailto:a@example.com")), is("mailto:a@example.com"));
+        assertThrows(CoercingParseLiteralException.class,
+                () -> coercing.parseLiteral(new StringValue("https://example.com/a//b")));
     }
 
     @Test
