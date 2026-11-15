@@ -114,10 +114,11 @@ class GraphqlSidecarTest {
     }
 
     @Test
-    void executeAcceptsHttpsAndMailtoLiteralsAndVariablesForAUrlScalar() throws Exception {
+    void executeAcceptsHttpsAndMailtoAndRejectsMalformedHttpAuthority() throws Exception {
         String scalars = "{\"MyUrl\":\"url\"}";
         String httpsUrl = "https://example.com/a";
         String mailtoUrl = "mailto:a@example.com";
+        String malformedHttpUrl = "http://example.com:bad";
         Response httpsLiteral = post("/v1/execute", urlScalarBody(scalars,
                 "{ echo(url: " + Json.mapper().writeValueAsString(httpsUrl) + ") }", null));
         Response mailtoLiteral = post("/v1/execute", urlScalarBody(scalars,
@@ -125,10 +126,18 @@ class GraphqlSidecarTest {
         String variableQuery = "query($url: MyUrl) { echo(url: $url) }";
         Response httpsVariable = post("/v1/execute", urlScalarBody(scalars, variableQuery, httpsUrl));
         Response mailtoVariable = post("/v1/execute", urlScalarBody(scalars, variableQuery, mailtoUrl));
+        Response malformedHttpLiteral = post("/v1/execute", urlScalarBody(scalars,
+                "{ echo(url: " + Json.mapper().writeValueAsString(malformedHttpUrl) + ") }", null));
+        Response malformedHttpVariable = post("/v1/execute",
+                urlScalarBody(scalars, variableQuery, malformedHttpUrl));
 
         for (Response response : new Response[] {httpsLiteral, mailtoLiteral, httpsVariable, mailtoVariable}) {
             assertThat(response.statusCode(), equalTo(200));
             assertFalse(json(response).has("errors"));
+        }
+        for (Response response : new Response[] {malformedHttpLiteral, malformedHttpVariable}) {
+            assertThat(response.statusCode(), equalTo(200));
+            assertThat(json(response).path("errors").isArray(), is(true));
         }
     }
 

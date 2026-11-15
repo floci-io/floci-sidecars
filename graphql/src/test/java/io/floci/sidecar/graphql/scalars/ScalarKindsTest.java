@@ -116,6 +116,7 @@ class ScalarKindsTest {
         assertThat(coercing.parseValue("mailto:a@example.com"), is("mailto:a@example.com"));
         assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("not a url"));
         assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("/relative/path"));
+        assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("http://example.com:bad"));
         assertThrows(CoercingParseValueException.class, () -> coercing.parseValue("https://example.com/a//b"));
     }
 
@@ -126,6 +127,8 @@ class ScalarKindsTest {
         assertThat(coercing.parseLiteral(new StringValue("https://example.com/a")),
                 is("https://example.com/a"));
         assertThat(coercing.parseLiteral(new StringValue("mailto:a@example.com")), is("mailto:a@example.com"));
+        assertThrows(CoercingParseLiteralException.class,
+                () -> coercing.parseLiteral(new StringValue("http://example.com:bad")));
         assertThrows(CoercingParseLiteralException.class,
                 () -> coercing.parseLiteral(new StringValue("https://example.com/a//b")));
     }
