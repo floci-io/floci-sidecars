@@ -27,4 +27,4 @@
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) with the sidecar as scope
 
 <!-- First PR here? Your CI checks wait for a maintainer to approve them before they run. That is GitHub's gate on first-time contributors, not a problem with your PR. -->
-<!-- Questions, or want feedback on an approach before going further? Join us on Slack: https://join.slack.com/t/floci/shared_invite/zt-3tjn02s3q-A00kEjJ1cZxsg_imTfy6Cw -->
+<!-- Questions, or want feedback on an approach before going further? Join us on Slack: https://floci.io/slack -->
